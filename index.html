@@ -203,8 +203,12 @@
                 <div class="sub-card" style="display:flex; justify-content:space-between;"><span style="color:#fbbf24;">🌅 일출 / 일몰</span><b id="sun-times">--:-- / --:--</b></div>
                 <div class="sub-card" style="display:flex; justify-content:space-between;"><span style="color:#38bdf8;">🌙 월출 / 월몰</span><b id="moon-times">--:-- / --:--</b></div>
                 <div class="sub-card">
+                    <div class="sub-card-title">대기질 모델 추정치</div>
                     <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>미세먼지(PM10)</span><b id="pm10-status">--</b></div>
                     <div style="display:flex; justify-content:space-between; border-top:1px solid #334155; padding-top:4px;"><span>초미세(PM2.5)</span><b id="pm25-status">--</b></div>
+                    <p class="travel-note">출처 <a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo · CAMS</a></p>
+                    <p id="air-quality-time" class="travel-note"></p>
+                    <p class="travel-note"><a href="https://www.airkorea.or.kr/web/main" target="_blank" rel="noopener noreferrer">국내 측정소 실측값 · 에어코리아</a></p>
                 </div>
             </div>
         </div>
@@ -382,19 +386,24 @@
     }
 
     async function fetchWeatherAndAirQuality(lat, lng, request) {
-        fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lng}&current=pm10,pm2_5`)
+        fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lng}&current=pm10,pm2_5&timezone=auto`)
             .then(res => res.ok ? res.json() : null)
             .catch(() => null)
             .then(data => {
                 if (request !== positionRequest) return;
                 document.getElementById('pm10-status').textContent = measurement(data?.current?.pm10, ' µg/m³');
                 document.getElementById('pm25-status').textContent = measurement(data?.current?.pm2_5, ' µg/m³');
+                const time = data?.current?.time;
+                document.getElementById('air-quality-time').textContent = time
+                    ? '모델 기준 시각 ' + time.replace('T', ' ') + ' (현지)'
+                    : '대기질 모델 정보를 불러올 수 없습니다.';
             });
 
         for (const id of ['temp-display', 'weather-desc-display', 'minmax-temp', 'wind-vis',
             'precip-prob', 'apparent-temp', 'sun-times', 'moon-times', 'pm10-status', 'pm25-status']) {
             document.getElementById(id).textContent = '—';
         }
+        document.getElementById('air-quality-time').textContent = '';
         document.getElementById('tip-clothes').textContent = '날씨 분석 중…';
         document.getElementById('tip-photo').textContent = '일몰 분석 중…';
 
