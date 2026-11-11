@@ -592,6 +592,11 @@
         list.append(item);
     }
 
+    const placeSearchAliases = new Map([
+        ['대영박물관', 'British Museum London'],
+        ['영국박물관', 'British Museum London']
+    ]);
+
     async function searchTravelPlaces(event) {
         event.preventDefault();
         const input = document.getElementById('place-query');
@@ -612,7 +617,8 @@
             const key = query.toLowerCase();
             let places = placeSearchCache.get(key);
             if (!places) {
-                const params = new URLSearchParams({ q: query, limit: 6 });
+                const alias = placeSearchAliases.get(query.replace(/\s+/g, ''));
+                const params = new URLSearchParams({ q: alias || query, limit: 6 });
                 const response = await fetch(`https://photon.komoot.io/api/?${params}`, { signal: AbortSignal.timeout(8000) });
                 if (!response.ok) throw new Error('Search unavailable');
                 const data = await response.json();
