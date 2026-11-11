@@ -28,6 +28,7 @@
     <!-- Leaflet Map CSS/JS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 12px; }
@@ -455,6 +456,7 @@
                 const data = await fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, signal);
                 if (controller.signal.aborted) return;
                 renderWeatherData(data);
+                renderMoonTimes(lat, lng, data.timezone);
                 weatherStatus.textContent = '마지막 조회 ' + checkedAt() + ' · 10분마다 갱신';
             } catch {
                 if (controller.signal.aborted) return;
@@ -530,7 +532,6 @@
 
         const formatTime = (iso) => iso?.split('T')[1] || '--:--';
         document.getElementById('sun-times').textContent = formatTime(daily.sunrise[0]) + ' / ' + formatTime(daily.sunset[0]);
-        document.getElementById('moon-times').textContent = '제공되지 않음';
         generateTravelAdvice(current.temperature_2m, current.apparent_temperature, current.weather_code, precipProb, formatTime(daily.sunset[0]));
 
         localTimeFormat = new Intl.DateTimeFormat('ko-KR', {
@@ -544,6 +545,38 @@
             wind: hourly.wind_speed_10m[index], code: hourly.weather_code[index]
         })).filter(row => row.time > current.time).slice(0, 12);
         renderHourlyForecast(rows);
+    }
+
+    function renderMoonTimes(lat, lng, timezone) {
+        const output = document.getElementById('moon-times');
+        try {
+            const dateFormat = new Intl.DateTimeFormat('en-CA', {
+                timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit'
+            });
+            const timeFormat = new Intl.DateTimeFormat('ko-KR', {
+                timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+            });
+            const now = new Date();
+            const today = dateFormat.format(now);
+            const dateParts = Object.fromEntries(dateFormat.formatToParts(now).map(({ type, value }) => [type, value]));
+            const utcMidnight = Date.UTC(+dateParts.year, +dateParts.month - 1, +dateParts.day);
+            const events = { rise: null, set: null };
+
+            // A local calendar day can span parts of adjacent UTC days.
+            for (const dayOffset of [-1, 0, 1]) {
+                const utcDay = new Date(utcMidnight + dayOffset * 86400000);
+                const times = window.SunCalc.getMoonTimes(utcDay, lat, lng, true);
+                for (const event of ['rise', 'set']) {
+                    const time = times[event];
+                    if (time && dateFormat.format(time) === today) events[event] ??= time;
+                }
+            }
+            const format = time => time ? timeFormat.format(time) : '없음';
+            output.textContent = format(events.rise) + ' / ' + format(events.set);
+            output.title = '선택 위치의 현지 시각 · SunCalc 계산값';
+        } catch {
+            output.textContent = '계산할 수 없음';
+        }
     }
 
     function updateLocalClock() {
