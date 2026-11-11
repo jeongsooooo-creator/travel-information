@@ -187,6 +187,7 @@
         </div>
         <p class="travel-note">선택한 위치에서 반경 3 km 이내 시설을 찾습니다. 출처 OpenStreetMap</p>
         <p id="facility-status" class="travel-note" role="status"></p>
+        <p class="travel-note"><a id="facility-map-search" href="#" target="_blank" rel="noopener noreferrer" hidden>Google 지도에서 주변 시설 검색</a></p>
         <ul id="facility-results" class="travel-results"></ul>
         <div class="travel-controls">
             <button id="share-position" type="button" class="btn-location" onclick="sharePosition()" disabled>선택한 위치 링크 복사</button>
@@ -860,6 +861,7 @@
         facilityController = null;
         facilityMarkers.clearLayers();
         document.getElementById('facility-results').replaceChildren();
+        document.getElementById('facility-map-search').hidden = true;
         document.getElementById('facility-status').textContent = '';
         for (const button of document.querySelectorAll('[data-facility]')) button.setAttribute('aria-pressed', 'false');
     }
@@ -901,6 +903,17 @@
         const status = document.getElementById('facility-status');
         const list = document.getElementById('facility-results');
         status.textContent = '반경 3 km 이내 시설 조회 중…';
+        const mapSearch = document.getElementById('facility-map-search');
+        const mapTerms = {
+            transit: 'public transport stations', pharmacy: 'pharmacy',
+            toilets: 'public toilets', tourism: 'tourist information center'
+        };
+        const mapParams = new URLSearchParams({
+            api: '1', query: `${mapTerms[button.dataset.facility]} near ${lat}, ${lng}`
+        });
+        mapSearch.href = 'https://www.google.com/maps/search/?' + mapParams;
+        mapSearch.textContent = 'Google 지도에서 주변 ' + label + ' 검색';
+        mapSearch.hidden = false;
         try {
             // Use a bounding box for the server lookup, then filter by true distance below.
             const radiusDegrees = 3 / 6371 * 180 / Math.PI;
@@ -960,6 +973,7 @@
                 });
             }
             if (facilities.length) {
+                mapSearch.hidden = true;
                 map.fitBounds([[lat, lng], ...facilities.map(facility => [facility.lat, facility.lng])], { padding: [24, 24], maxZoom: 15 });
             }
         } catch (error) {
