@@ -249,10 +249,10 @@
 </div>
 
 <!-- Modal -->
-<div id="city-modal" class="modal" onclick="if(event.target.id==='city-modal') closeCityModal();">
+<div id="city-modal" class="modal" role="dialog" aria-labelledby="city-modal-title" onclick="if(event.target.id==='city-modal') closeCityModal();">
     <div class="modal-content">
         <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; padding-bottom:8px;">
-            <b style="color:#38bdf8; font-size:14px;">✈️ 한국인이 많이 찾는 세계 주요 도시</b>
+            <h2 id="city-modal-title" style="color:#38bdf8; font-size:14px;">✈️ 한국인이 많이 찾는 세계 주요 도시</h2>
             <span onclick="closeCityModal()" style="cursor:pointer; font-size:18px; color:#94a3b8;">✖</span>
         </div>
         <div id="famous-cities-grid" class="city-grid"></div>
