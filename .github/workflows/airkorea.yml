@@ -1,0 +1,115 @@
+name: Refresh AirKorea observations
+
+on:
+  schedule:
+    - cron: '23,53 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: airkorea-observations
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect public observations
+        env:
+          AIRKOREA_SERVICE_KEY: ${{ secrets.AIRKOREA_SERVICE_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "$AIRKOREA_SERVICE_KEY" ]]; then
+            echo "::notice::Set the AIRKOREA_SERVICE_KEY repository secret to enable observations."
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          import math
+          import os
+          from collections import defaultdict
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+          from urllib.parse import urlencode
+          from urllib.request import urlopen
+
+          def rows(path, **parameters):
+              page = 1
+              while True:
+                  query = urlencode(dict(parameters, serviceKey=os.environ["AIRKOREA_SERVICE_KEY"],
+                                         returnType="json", pageNo=page, numOfRows=100))
+                  try:
+                      with urlopen("https://apis.data.go.kr/B552584/" + path + "?" + query, timeout=12) as response:
+                          result = json.load(response)["response"]
+                      code = result["header"]["resultCode"]
+                      if code != "00":
+                          raise ValueError("API result code " + str(code))
+                      body = result["body"]
+                      items = body["items"]
+                      total = int(body["totalCount"])
+                  except Exception as error:
+                      raise SystemExit(f"AirKorea request failed for {path}: {type(error).__name__}") from None
+                  yield from items
+                  if not items or page * 100 >= total:
+                      return
+                  page += 1
+
+          def number(value):
+              try:
+                  result = float(value)
+              except (TypeError, ValueError):
+                  return None
+              return result if math.isfinite(result) and result >= 0 else None
+
+          def timestamp(value):
+              try:
+                  day, hour = value.split()
+                  if hour == "24:00":
+                      date = datetime.fromisoformat(day) + timedelta(days=1)
+                  else:
+                      date = datetime.fromisoformat(value)
+                  return date.replace(tzinfo=timezone(timedelta(hours=9))).isoformat()
+              except (AttributeError, TypeError, ValueError):
+                  return None
+
+          stations = defaultdict(list)
+          for row in rows("MsrstnInfoInqireSvc/getMsrstnList"):
+              lat, lng = number(row.get("dmX")), number(row.get("dmY"))
+              if lat is not None and lng is not None and 32 <= lat <= 39 and 124 <= lng <= 133:
+                  stations[row["stationName"]].append((lat, lng))
+
+          observations = []
+          for row in rows("ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty", sidoName="전국", ver="1.0"):
+              name = row["stationName"]
+              points = stations.get(name, [])
+              pm10, pm25 = number(row.get("pm10Value")), number(row.get("pm25Value"))
+              observed = timestamp(row.get("dataTime"))
+              if len(points) == 1 and observed and pm10 is not None and pm25 is not None:
+                  lat, lng = points[0]
+                  observations.append(dict(name=name, lat=lat, lng=lng, pm10=pm10, pm25=pm25, time=observed))
+
+          if not observations:
+              raise SystemExit("AirKorea returned no usable observations.")
+          Path(os.environ["RUNNER_TEMP"], "airkorea.json").write_text(
+              json.dumps(observations, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+          )
+          PY
+      - name: Publish observations to the data branch
+        shell: bash
+        run: |
+          [[ -s "$RUNNER_TEMP/airkorea.json" ]] || exit 0
+          if git ls-remote --exit-code --heads origin airkorea-data; then
+            git fetch --depth=1 origin refs/heads/airkorea-data
+            git switch -C airkorea-data FETCH_HEAD
+          else
+            git switch --orphan airkorea-data
+          fi
+          cp "$RUNNER_TEMP/airkorea.json" airkorea.json
+          git add airkorea.json
+          git diff --cached --quiet && exit 0
+          git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "Update AirKorea observations"
+          git push origin HEAD:refs/heads/airkorea-data
