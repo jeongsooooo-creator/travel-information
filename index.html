@@ -777,9 +777,13 @@
                 updatePosition(37.5665, 126.9780, '서울', '대한민국');
                 return;
             }
-            status.textContent = error?.code === 1
-                ? '브라우저에서 이 사이트의 위치 접근을 허용해 주세요.'
-                : '현재 위치를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.';
+            if (error?.code === 1) {
+                status.textContent = '위치 접근이 차단됐습니다. 주소창 왼쪽의 사이트 설정에서 위치를 허용한 뒤 다시 눌러 주세요.';
+            } else if (error?.code === 3) {
+                status.textContent = '15초 안에 위치를 확인하지 못했습니다. 잠시 후 다시 눌러 주세요.';
+            } else {
+                status.textContent = '기기에서 현재 위치를 가져올 수 없습니다. 기기의 위치 서비스가 켜져 있는지 확인해 주세요.';
+            }
         }
 
         if (!navigator.geolocation) {
@@ -793,9 +797,10 @@
                 if (!finishLookup()) return;
                 updatePosition(coords.latitude, coords.longitude);
                 map.panTo(selectedMarker.getLatLng(), { animate: false });
+                if (!onStartup) status.textContent = '지도와 날씨를 현재 위치 기준으로 바꿨습니다.';
             },
             onLocationError,
-            { timeout: 5000, maximumAge: 0 }
+            { timeout: onStartup ? 5000 : 15000, maximumAge: 0 }
         );
     }
 
