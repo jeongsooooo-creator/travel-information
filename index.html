@@ -54,7 +54,11 @@
         .travel-note { margin-top: 6px; color: #cbd5e1; font-size: 12px; }
         .travel-note:empty { margin: 0; }
         .travel-note a { color: #7dd3fc; }
-        .hourly-scroll { overflow: auto; max-height: 290px; margin-top: 10px; }
+        /* Keep the map below the forecast in place while a new forecast loads. */
+        .hourly-scroll { overflow: auto; height: 290px; margin-top: 10px; }
+        #hourly-status { min-height: 2.8em; line-height: 1.4; }
+        #local-clock { min-height: 1.4em; line-height: 1.4; }
+        @media (min-width: 640px) { #hourly-status { min-height: 1.4em; } }
         .hourly-table th { position: sticky; top: 0; background: #1e293b; }
         .hourly-table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 13px; }
         .hourly-table th, .hourly-table td { padding: 7px 8px; text-align: left; border-bottom: 1px solid #334155; }
@@ -338,7 +342,9 @@
         clearFacilities();
         localTimeFormat = undefined;
         document.getElementById('local-clock').textContent = '현지 시각 조회 중…';
-        document.getElementById('hourly-forecast').replaceChildren();
+        const forecast = document.getElementById('hourly-forecast');
+        forecast.replaceChildren();
+        forecast.scrollTop = 0;
         document.getElementById('hourly-status').textContent = '예보 조회 중…';
         document.getElementById('tip-action').textContent = '날씨 분석 중…';
         document.getElementById('share-position').disabled = false;
