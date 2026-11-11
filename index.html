@@ -208,7 +208,7 @@
                     <div style="display:flex; justify-content:space-between; border-top:1px solid #334155; padding-top:4px;"><span>초미세(PM2.5)</span><b id="pm25-status">--</b></div>
                     <p class="travel-note">출처 <a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo · CAMS</a></p>
                     <p id="air-quality-time" class="travel-note"></p>
-                    <p class="travel-note"><a href="https://www.airkorea.or.kr/web/main" target="_blank" rel="noopener noreferrer">국내 측정소 실측값 · 에어코리아</a></p>
+                    <p id="airkorea-measurements" class="travel-note" hidden><a href="https://www.airkorea.or.kr/web/main" target="_blank" rel="noopener noreferrer">국내 측정소 실측값 · 에어코리아</a></p>
                 </div>
             </div>
         </div>
@@ -361,6 +361,9 @@
         document.getElementById('input-lng').value = currentLng;
         selectedMarker.setLatLng([currentLat, currentLng]);
 
+        const airKoreaLink = document.getElementById('airkorea-measurements');
+        airKoreaLink.hidden = true;
+        let countryCode;
         if (!cityName || !countryName) {
             document.getElementById('coord-badge').innerText = `[위치 조회 중...] 위도: ${currentLat} | 경도: ${currentLng}`;
             document.getElementById('location-name-display').innerText = '위치 조회 중...';
@@ -368,10 +371,15 @@
             if (request !== positionRequest) return;
             cityName ||= geoInfo.city;
             countryName ||= geoInfo.country;
+            countryCode = geoInfo.countryCode;
         }
 
         document.getElementById('coord-badge').innerText = `[${countryName} ${cityName}] 위도: ${currentLat} | 경도: ${currentLng}`;
         document.getElementById('location-name-display').innerText = `${countryName} ${cityName}`;
+        const isSouthKorea = countryCode
+            ? countryCode === 'KR'
+            : /^(대한민국|한국|south korea|republic of korea|korea, republic of)$/i.test(countryName.trim());
+        airKoreaLink.hidden = !isSouthKorea;
 
     }
 
@@ -379,7 +387,7 @@
         try {
             const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=ko`);
             const data = await res.json();
-            return { country: data.countryName || "선택 지역", city: data.city || data.locality || "지점" };
+            return { country: data.countryName || "선택 지역", city: data.city || data.locality || "지점", countryCode: data.countryCode };
         } catch (err) {
             return { country: "선택", city: "지점" };
         }
