@@ -1013,13 +1013,17 @@
         status.textContent = '반경 3 km 이내 시설 조회 중…';
         const mapSearch = document.getElementById('facility-map-search');
         const mapTerms = {
-            transit: 'public transport stations', pharmacy: 'pharmacy',
-            toilets: 'public toilets', tourism: 'tourist information center'
+            transit: ['public transport stations', '역 정류장'],
+            pharmacy: ['pharmacy', '약국'],
+            toilets: ['public toilets', '공중화장실'],
+            tourism: ['tourist information center', '관광안내소']
         };
-        const mapParams = new URLSearchParams({
-            api: '1', query: `${mapTerms[button.dataset.facility]} near ${lat}, ${lng}`
+        const [internationalTerm, domesticTerm] = mapTerms[button.dataset.facility];
+        const mapUrl = term => `https://www.google.com/maps/search/${encodeURIComponent(term)}/@${lat},${lng},15z`;
+        mapSearch.href = mapUrl(internationalTerm);
+        selectedCountryIsKorea.then(domestic => {
+            if (domestic && !controller.signal.aborted) mapSearch.href = mapUrl(domesticTerm);
         });
-        mapSearch.href = 'https://www.google.com/maps/search/?' + mapParams;
         mapSearch.textContent = 'Google 지도에서 주변 ' + label + ' 검색';
         mapSearch.hidden = false;
         try {
