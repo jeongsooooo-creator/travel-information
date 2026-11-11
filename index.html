@@ -41,6 +41,9 @@
         
         /* Buttons & Inputs */
         .btn-primary { background: linear-gradient(135deg, #0284c7, #4f46e5); color: white; border: 1px solid #38bdf8; padding: 8px 14px; border-radius: 8px; font-weight: bold; font-size: 13px; width: 100%; cursor: pointer; }
+        .site-heading { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:6px 16px; }
+        .site-clock { margin-left:auto; text-align:right; color:#cbd5e1; font-size:12px; line-height:1.5; font-variant-numeric:tabular-nums; }
+        .site-clock-current { color:#f8fafc; font-weight:600; }
         .location-actions { display: flex; flex-wrap: wrap; gap: 8px; }
         .location-actions .btn-primary { flex: 1 1 185px; width: auto; }
         .btn-location { flex: 1 0 auto; background: #0f172a; color: #7dd3fc; border: 1px solid #38bdf8; padding: 8px 12px; border-radius: 8px; font-weight: bold; font-size: 13px; cursor: pointer; }
@@ -112,7 +115,13 @@
     <!-- Header -->
     <div class="card">
         <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
-            <h1 style="font-size: 18px; color: #38bdf8;">🌐 글로벌 여행·기상 어드바이저</h1>
+            <div class="site-heading">
+                <h1 style="font-size: 18px; color: #38bdf8;">🌐 글로벌 여행·기상 어드바이저</h1>
+                <div class="site-clock">
+                    <div class="site-clock-current">현재 <time id="device-clock"></time></div>
+                    <div>마지막 갱신 · 날씨 <time id="weather-updated-at">—</time> · 대기질 <time id="air-updated-at">—</time></div>
+                </div>
+            </div>
             <div class="location-actions">
                 <button type="button" onclick="openCityModal()" class="btn-primary">🏙️ 세계 주요 도시 선택 (Top 20)</button>
                 <button type="button" id="locate-button" onclick="locateUser()" class="btn-location">📍 내 위치로</button>
@@ -272,6 +281,29 @@
 
     let map, selectedMarker, facilityMarkers;
     let localTimeFormat;
+    const deviceDateTimeFormat = new Intl.DateTimeFormat('ko-KR', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+    });
+    const deviceTimeFormat = new Intl.DateTimeFormat('ko-KR', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+    });
+
+    function setSiteTime(id, date, format) {
+        const element = document.getElementById(id);
+        element.textContent = date ? format.format(date) : '—';
+        if (date) {
+            element.dateTime = date.toISOString();
+            element.title = deviceDateTimeFormat.format(date) + ' (기기 시각)';
+        } else {
+            element.removeAttribute('datetime');
+            element.removeAttribute('title');
+        }
+    }
+
+    function updateDeviceClock() {
+        setSiteTime('device-clock', new Date(), deviceDateTimeFormat);
+    }
     let facilityController;
     const dataRefreshInterval = 10 * 60 * 1000;
     let lastDataRequestAt = 0;
@@ -407,6 +439,8 @@
     }
 
     function resetWeatherAndAirQuality() {
+        setSiteTime('weather-updated-at', null);
+        setSiteTime('air-updated-at', null);
         document.getElementById('weather-refresh-status').textContent = '날씨 조회 중…';
         for (const id of ['temp-display', 'weather-desc-display', 'minmax-temp', 'wind-vis',
             'precip-prob', 'apparent-temp', 'sun-times', 'moon-times', 'pm10-status', 'pm25-status']) {
@@ -457,6 +491,7 @@
                 if (controller.signal.aborted) return;
                 renderWeatherData(data);
                 renderMoonTimes(lat, lng, data.timezone);
+                setSiteTime('weather-updated-at', new Date(), deviceTimeFormat);
                 weatherStatus.textContent = '마지막 조회 ' + checkedAt() + ' · 10분마다 갱신';
             } catch {
                 if (controller.signal.aborted) return;
@@ -481,6 +516,7 @@
                 renderAirReading('pm25', data.current.pm2_5, [15, 35, 75]);
                 airStatus.textContent = '모델 기준 시각 ' + data.current.time.replace('T', ' ') + ' (현지)';
                 airStatus.dataset.loaded = 'true';
+                setSiteTime('air-updated-at', new Date(), deviceTimeFormat);
             } catch {
                 if (controller.signal.aborted) return;
                 if (airStatus.dataset.loaded) {
@@ -958,6 +994,9 @@
             { timeout: onStartup ? 5000 : 15000, maximumAge: 0 }
         );
     }
+
+    updateDeviceClock();
+    setInterval(updateDeviceClock, 1000);
 
     window.onload = function() {
         initMap();
