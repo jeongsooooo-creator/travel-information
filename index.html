@@ -202,6 +202,7 @@
     ];
 
     let map, selectedMarker;
+    let positionRequest = 0;
     let currentLat = 37.5665;
     let currentLng = 126.9780;
 
@@ -270,8 +271,13 @@
     }
 
     async function updatePosition(lat, lng, cityName = null, countryName = null) {
-        currentLat = parseFloat(lat.toFixed(4));
-        currentLng = parseFloat(lng.toFixed(4));
+        const request = ++positionRequest;
+        lat = parseFloat(lat.toFixed(4));
+        lng = parseFloat(lng.toFixed(4));
+        currentLat = lat;
+        currentLng = lng;
+        fetchSafeMajorCities(lat, lng, request);
+        fetchWeatherAndAirQuality(lat, lng, request);
 
         document.getElementById('input-lat').value = currentLat;
         document.getElementById('input-lng').value = currentLng;
@@ -279,16 +285,16 @@
 
         if (!cityName || !countryName) {
             document.getElementById('coord-badge').innerText = `[위치 조회 중...] 위도: ${currentLat} | 경도: ${currentLng}`;
-            const geoInfo = await fetchLocationInfo(currentLat, currentLng);
+            document.getElementById('location-name-display').innerText = '위치 조회 중...';
+            const geoInfo = await fetchLocationInfo(lat, lng);
+            if (request !== positionRequest) return;
             cityName = geoInfo.city;
             countryName = geoInfo.country;
         }
 
         document.getElementById('coord-badge').innerText = `[${countryName} ${cityName}] 위도: ${currentLat} | 경도: ${currentLng}`;
         document.getElementById('location-name-display').innerText = `${countryName} ${cityName}`;
-        
-        fetchWeatherAndAirQuality(currentLat, currentLng);
-        fetchSafeMajorCities(currentLat, currentLng);
+
     }
 
     async function fetchLocationInfo(lat, lng) {
@@ -301,15 +307,18 @@
         }
     }
 
-    async function fetchWeatherAndAirQuality(lat, lng) {
+    async function fetchWeatherAndAirQuality(lat, lng, request) {
         try {
             const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true&hourly=apparent_temperature&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,moonrise,moonset,precipitation_probability_max&timezone=auto`);
             const wData = await wRes.json();
+            if (request !== positionRequest) return;
             const aRes = await fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lng}&current=pm10,pm2_5`);
             const aData = await aRes.json();
-            renderWeatherData(wData, aData);
+            if (request === positionRequest) renderWeatherData(wData, aData);
         } catch (err) {
-            document.getElementById('weather-desc-display').innerText = "조회 실패";
+            if (request === positionRequest) {
+                document.getElementById('weather-desc-display').innerText = "조회 실패";
+            }
         }
     }
 
@@ -341,7 +350,7 @@
         generateTravelAdvice(current.temperature, apparentTemp, current.weathercode, precipProb, formatTime(daily.sunset[0]));
     }
 
-    async function fetchSafeMajorCities(lat, lng) {
+    async function fetchSafeMajorCities(lat, lng, request) {
         const listEl = document.getElementById('city-list');
         listEl.innerHTML = `<li style="text-align:center; color:#94a3b8; padding:10px;">주변 도시 탐색 중...</li>`;
 
@@ -357,53 +366,40 @@
                 cities.push({ name: gData.city, country: currentCountry, lat: lat, lng: lng, dist: 0 });
             }
             
-            if (gData.localityInfo && gData.localityInfo.informative) {
-                gData.localityInfo.informative.forEach(item => {
-                    if (item.name && item.description && 
-                       (item.description.includes('city') || item.description.includes('town') || item.description.includes('prefecture') || item.description.includes('district'))) {
-                        if (!cities.some(c => c.name === item.name)) {
-                            cities.push({
-                                name: item.name,
-                                country: currentCountry,
-                                lat: lat + (Math.random() - 0.5) * 0.3,
-                                lng: lng + (Math.random() - 0.5) * 0.3,
-                                dist: Math.floor(Math.random() * 45) + 5
-                            });
-                        }
-                    }
-                });
-            }
         } catch (e) {
             console.warn("Geocode API Fail", e);
         }
 
-        if (cities.length < 5) {
-            try {
-                const query = `[out:json][timeout:6];node(around:60000,${lat},${lng})["place"~"city|town"];out body 20;`;
-                const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-                const oRes = await fetch(url);
-                if (oRes.ok) {
-                    const oData = await oRes.json();
-                    if (oData.elements) {
-                        oData.elements.forEach(el => {
-                            const cName = el.tags['name:ko'] || el.tags.name || el.tags['name:en'];
-                            if (cName && !cities.some(c => c.name === cName)) {
-                                const d = calculateHaversine(lat, lng, el.lat, el.lon);
-                                cities.push({
-                                    name: cName,
-                                    country: "",
-                                    lat: parseFloat(el.lat.toFixed(4)),
-                                    lng: parseFloat(el.lon.toFixed(4)),
-                                    dist: d
-                                });
-                            }
-                        });
-                    }
+        if (request !== positionRequest) return;
+
+        try {
+            const query = `[out:json][timeout:6];node(around:60000,${lat},${lng})["place"~"^(city|town)$"];out body;`;
+            const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+            const oRes = await fetch(url);
+            if (oRes.ok) {
+                const oData = await oRes.json();
+                if (request !== positionRequest) return;
+                if (oData.elements) {
+                    oData.elements.forEach(el => {
+                        const cName = el.tags['name:ko'] || el.tags.name || el.tags['name:en'];
+                        if (cName && !cities.some(c => c.name === cName)) {
+                            const d = calculateHaversine(lat, lng, el.lat, el.lon);
+                            cities.push({
+                                name: cName,
+                                country: "",
+                                lat: parseFloat(el.lat.toFixed(4)),
+                                lng: parseFloat(el.lon.toFixed(4)),
+                                dist: d
+                            });
+                        }
+                    });
                 }
-            } catch (err) {
-                console.warn("Overpass Fallback Timeout", err);
             }
+        } catch (err) {
+            console.warn("Nearby city lookup failed", err);
         }
+
+        if (request !== positionRequest) return;
 
         if (cities.length === 0) {
             listEl.innerHTML = `<li style="text-align:center; color:#94a3b8; padding:10px;">주변 도시를 찾을 수 없습니다.</li>`;
@@ -449,8 +445,12 @@
         initMap();
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
-                (pos) => updatePosition(parseFloat(pos.coords.latitude.toFixed(4)), parseFloat(pos.coords.longitude.toFixed(4))),
-                () => updatePosition(37.5665, 126.9780, "서울", "대한민국"),
+                (pos) => {
+                    if (positionRequest === 0) updatePosition(pos.coords.latitude, pos.coords.longitude);
+                },
+                () => {
+                    if (positionRequest === 0) updatePosition(37.5665, 126.9780, "서울", "대한민국");
+                },
                 { timeout: 5000 }
             );
         } else {
