@@ -755,6 +755,12 @@
         const status = document.getElementById('location-status');
 
         if (!onStartup) {
+            ++searchRequest;
+            document.getElementById('place-query').value = '';
+            document.getElementById('place-results').replaceChildren();
+            document.getElementById('place-status').textContent = '';
+            document.getElementById('place-search-button').disabled = false;
+
             button.disabled = true;
             status.textContent = '현재 위치를 확인하는 중입니다…';
         }
