@@ -104,11 +104,10 @@
         /* Modal Backdrop - 어두운 음영을 제거하여 배경이 밝게 보이도록 수정 */
         .modal { display: none; position: fixed; inset: 0; background-color: transparent; z-index: 100; align-items: center; justify-content: center; padding: 12px; }
         .modal-content { background-color: rgba(30, 41, 59, 0.95); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid #38bdf8; border-radius: 12px; width: 100%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; padding: 16px; gap: 12px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); }
-        .city-list-groups { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding-right: 4px; }
-        .city-group + .city-group { border-top: 1px solid #334155; padding-top: 10px; }
-        .city-group-title { margin-bottom: 6px; font-size: 12px; color: #cbd5e1; }
-        .city-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .city-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; overflow-y: auto; padding-right: 4px; }
         @media (min-width: 640px) { .city-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+        .city-btn strong { font-size: 12px; color: #38bdf8; }
+        .city-btn span { font-size: 10px; color: #94a3b8; }
         .city-btn { background-color: #0f172a; border: 1px solid #334155; padding: 8px; border-radius: 8px; text-align: left; color: white; cursor: pointer; }
     </style>
 </head>
@@ -255,7 +254,7 @@
             <b style="color:#38bdf8; font-size:14px;">✈️ 세계 주요 도시</b>
             <span onclick="closeCityModal()" style="cursor:pointer; font-size:18px; color:#94a3b8;">✖</span>
         </div>
-        <div id="famous-city-groups" class="city-list-groups"></div>
+        <div id="famous-cities-grid" class="city-grid"></div>
     </div>
 </div>
 
@@ -376,43 +375,29 @@
     }
 
     function openCityModal() {
-        const list = document.getElementById('famous-city-groups');
+        const grid = document.getElementById('famous-cities-grid');
         const groups = new Map();
         for (const city of FAMOUS_CITIES) {
             if (!groups.has(city.country)) groups.set(city.country, []);
             groups.get(city.country).push(city);
         }
 
-        const countries = [...groups.keys()].sort((a, b) => {
-            const priority = Number(b === '대한민국') - Number(a === '대한민국');
-            return priority || a.localeCompare(b, 'ko');
-        });
+        grid.replaceChildren(...[...groups.values()].flat().map(city => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'city-btn';
 
-        list.replaceChildren(...countries.map(country => {
-            const group = document.createElement('section');
-            group.className = 'city-group';
-
-            const title = document.createElement('h3');
-            title.className = 'city-group-title';
-            title.textContent = country;
-
-            const grid = document.createElement('div');
-            grid.className = 'city-grid';
-            for (const city of groups.get(country)) {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'city-btn';
-                button.textContent = city.name;
-                button.addEventListener('click', () => selectCityFromModal(city.lat, city.lng, city.name, city.country));
-                grid.append(button);
-            }
-
-            group.append(title, grid);
-            return group;
+            const name = document.createElement('strong');
+            name.textContent = city.name;
+            const country = document.createElement('span');
+            country.textContent = city.country;
+            button.append(name, ' ', country);
+            button.addEventListener('click', () => selectCityFromModal(city.lat, city.lng, city.name, city.country));
+            return button;
         }));
 
         document.getElementById('city-modal').style.display = 'flex';
-        list.scrollTop = 0;
+        grid.scrollTop = 0;
     }
 
     function closeCityModal() {
