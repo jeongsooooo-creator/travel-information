@@ -34,13 +34,14 @@ jobs:
           from collections import defaultdict
           from datetime import datetime, timedelta, timezone
           from pathlib import Path
-          from urllib.parse import urlencode
+          from urllib.error import HTTPError
+          from urllib.parse import unquote, urlencode
           from urllib.request import urlopen
 
           def rows(path, **parameters):
               page = 1
               while True:
-                  query = urlencode(dict(parameters, serviceKey=os.environ["AIRKOREA_SERVICE_KEY"],
+                  query = urlencode(dict(parameters, serviceKey=unquote(os.environ["AIRKOREA_SERVICE_KEY"].strip()),
                                          returnType="json", pageNo=page, numOfRows=100))
                   try:
                       with urlopen("https://apis.data.go.kr/B552584/" + path + "?" + query, timeout=12) as response:
@@ -51,8 +52,11 @@ jobs:
                       body = result["body"]
                       items = body["items"]
                       total = int(body["totalCount"])
-                  except Exception as error:
-                      raise SystemExit(f"AirKorea request failed for {path}: {type(error).__name__}") from None
+                  except HTTPError as error:
+                      raise SystemExit(f"AirKorea request failed for {path}: HTTP {error.code}") from None
+                  except (KeyError, TypeError, ValueError, OSError) as error:
+                      detail = str(error) if str(error).startswith("API result code ") else type(error).__name__
+                      raise SystemExit(f"AirKorea request failed for {path}: {detail}") from None
                   yield from items
                   if not items or page * 100 >= total:
                       return
