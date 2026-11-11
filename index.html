@@ -46,10 +46,14 @@
         .btn-location:disabled { opacity: 0.7; cursor: wait; }
         .location-status { color: #cbd5e1; font-size: 12px; }
         .travel-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
-        .travel-controls button { min-height: 34px; }
         .travel-controls input { flex: 1; min-width: 120px; padding: 7px 9px; }
+        .travel-controls button, .travel-results button { min-height: 34px; }
+        .travel-controls button[aria-pressed="true"] { background: #0c4a6e; }
+        .travel-results { list-style: none; display: grid; gap: 5px; margin-top: 6px; }
+        .travel-results button { width: 100%; text-align: left; }
         .travel-note { margin-top: 6px; color: #cbd5e1; font-size: 12px; }
         .travel-note:empty { margin: 0; }
+        .travel-note a { color: #7dd3fc; }
         .hourly-scroll { overflow: auto; max-height: 290px; margin-top: 10px; }
         .hourly-table th { position: sticky; top: 0; background: #1e293b; }
         .hourly-table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 13px; }
@@ -103,6 +107,13 @@
                 <button type="button" id="locate-button" onclick="locateUser()" class="btn-location">📍 내 위치로</button>
             </div>
             <p id="location-status" class="location-status" role="status"></p>
+            <form class="travel-controls" onsubmit="searchTravelPlaces(event)">
+                <input id="place-query" class="input-coord" type="search" aria-label="도시·장소 이름" placeholder="도시·장소 이름 (예: 오사카역)" minlength="2" maxlength="120" required>
+                <button id="place-search-button" type="submit" class="btn-location">장소 검색</button>
+            </form>
+            <p id="place-status" class="travel-note" role="status"></p>
+            <ul id="place-results" class="travel-results"></ul>
+            <p class="travel-note">검색을 누르면 입력한 검색어를 Photon에 보냅니다. <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap</a></p>
         </div>
         
         <div style="display:flex; flex-direction:column; gap:8px; background:#0f172a; padding:10px; border-radius:8px; border:1px solid #334155;">
@@ -148,6 +159,15 @@
         </div>
         <p id="local-clock" class="travel-note" style="margin-bottom:8px;"></p>
         <div id="map"></div>
+        <div class="travel-controls" aria-label="선택 위치 주변 시설">
+            <button type="button" class="btn-location" data-facility="transit" aria-pressed="false" onclick="toggleFacilities(this)">역·정류장</button>
+            <button type="button" class="btn-location" data-facility="pharmacy" aria-pressed="false" onclick="toggleFacilities(this)">약국</button>
+            <button type="button" class="btn-location" data-facility="toilets" aria-pressed="false" onclick="toggleFacilities(this)">공중화장실</button>
+            <button type="button" class="btn-location" data-facility="tourism" aria-pressed="false" onclick="toggleFacilities(this)">관광안내소</button>
+        </div>
+        <p class="travel-note">시설을 누르면 선택한 지도 좌표로 Overpass에서 조회합니다.</p>
+        <p id="facility-status" class="travel-note" role="status"></p>
+        <ul id="facility-results" class="travel-results"></ul>
         <div class="travel-controls">
             <button id="share-position" type="button" class="btn-location" onclick="sharePosition()" disabled>선택한 위치 링크 복사</button>
             <input id="share-url" class="input-coord" aria-label="선택한 위치 링크" readonly hidden>
@@ -233,8 +253,11 @@
         { name: "샌프란시스코", country: "미국", lat: 37.7749, lng: -122.4194 }
     ];
 
-    let map, selectedMarker;
+    let map, selectedMarker, facilityMarkers;
     let localTimeFormat;
+    let facilityRequest = 0;
+    let searchRequest = 0;
+    const placeSearchCache = new Map();
     let positionRequest = 0;
     let geolocationRequest = 0;
     let currentLat = 37.5665;
@@ -269,6 +292,7 @@
         const { url, options } = baseMaps[baseMapProvider];
         L.tileLayer(url, options).addTo(map);
         selectedMarker = L.marker([currentLat, currentLng]).addTo(map);
+        facilityMarkers = L.layerGroup().addTo(map);
 
         map.on('click', function(e) {
             updatePosition(parseFloat(e.latlng.lat.toFixed(4)), parseFloat(e.latlng.lng.toFixed(4)));
@@ -311,6 +335,7 @@
         lng = parseFloat(lng.toFixed(4));
         currentLat = lat;
         currentLng = lng;
+        clearFacilities();
         localTimeFormat = undefined;
         document.getElementById('local-clock').textContent = '현지 시각 조회 중…';
         document.getElementById('hourly-forecast').replaceChildren();
@@ -548,6 +573,134 @@
         if (code >= 95) return '뇌우 ⛈️';
         if ((code >= 71 && code <= 77) || code === 85 || code === 86) return '눈 ❄️';
         return '비 🌧️';
+    }
+
+    function appendTravelResult(list, label, action) {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-sm';
+        button.textContent = label;
+        button.addEventListener('click', action);
+        item.append(button);
+        list.append(item);
+    }
+
+    async function searchTravelPlaces(event) {
+        event.preventDefault();
+        const input = document.getElementById('place-query');
+        const button = document.getElementById('place-search-button');
+        const status = document.getElementById('place-status');
+        const list = document.getElementById('place-results');
+        const query = input.value.trim();
+        list.replaceChildren();
+        if (query.length < 2) {
+            status.textContent = '도시나 장소 이름을 두 글자 이상 입력해 주세요.';
+            return;
+        }
+
+        const request = ++searchRequest;
+        button.disabled = true;
+        status.textContent = '장소 검색 중…';
+        try {
+            const key = query.toLowerCase();
+            let places = placeSearchCache.get(key);
+            if (!places) {
+                const params = new URLSearchParams({ q: query, limit: 6 });
+                const response = await fetch(`https://photon.komoot.io/api/?${params}`, { signal: AbortSignal.timeout(8000) });
+                if (!response.ok) throw new Error('Search unavailable');
+                const data = await response.json();
+                places = data.features.filter(feature => {
+                    const [lng, lat] = feature.geometry?.coordinates || [];
+                    return Number.isFinite(lat) && Number.isFinite(lng) && feature.properties?.name;
+                });
+                placeSearchCache.set(key, places);
+            }
+            if (request !== searchRequest) return;
+            status.textContent = places.length ? '' : '일치하는 장소가 없습니다.';
+            for (const place of places) {
+                const [lng, lat] = place.geometry.coordinates;
+                const { name, city, state, country } = place.properties;
+                const label = [...new Set([name, city, state, country].filter(Boolean))].join(' · ');
+                appendTravelResult(list, label, () => {
+                    updatePosition(lat, lng, name, country);
+                    map.setView(selectedMarker.getLatLng(), 12);
+                    list.replaceChildren();
+                    input.value = name;
+                });
+            }
+        } catch {
+            if (request === searchRequest) status.textContent = '장소 검색에 실패했습니다. 잠시 후 다시 시도해 주세요.';
+        } finally {
+            if (request === searchRequest) button.disabled = false;
+        }
+    }
+
+    const facilityFilters = {
+        transit: ['["railway"~"^(station|halt|tram_stop)$"]', '["highway"="bus_stop"]', '["public_transport"="station"]'],
+        pharmacy: ['["amenity"="pharmacy"]'],
+        toilets: ['["amenity"="toilets"]'],
+        tourism: ['["tourism"="information"]["information"="office"]']
+    };
+
+    function clearFacilities() {
+        ++facilityRequest;
+        facilityMarkers.clearLayers();
+        document.getElementById('facility-results').replaceChildren();
+        document.getElementById('facility-status').textContent = '';
+        for (const button of document.querySelectorAll('[data-facility]')) button.setAttribute('aria-pressed', 'false');
+    }
+
+    async function toggleFacilities(button) {
+        const active = button.getAttribute('aria-pressed') === 'true';
+        clearFacilities();
+        if (active) return;
+
+        button.setAttribute('aria-pressed', 'true');
+        const request = facilityRequest;
+        const lat = currentLat;
+        const lng = currentLng;
+        const label = button.textContent.trim();
+        const status = document.getElementById('facility-status');
+        const list = document.getElementById('facility-results');
+        status.textContent = '반경 3 km 이내 시설 조회 중…';
+        try {
+            const queries = facilityFilters[button.dataset.facility].map(filter => `nwr(around:3000,${lat},${lng})${filter};`).join('');
+            const params = new URLSearchParams({ data: `[out:json][timeout:8];(${queries});out center;` });
+            const response = await fetch('https://overpass-api.de/api/interpreter?' + params, { signal: AbortSignal.timeout(12000) });
+            if (!response.ok) throw new Error('Facilities unavailable');
+            const data = await response.json();
+            if (request !== facilityRequest) return;
+            if (data.remark) throw new Error('Incomplete facility results');
+            const facilities = data.elements.flatMap(element => {
+                const point = element.center || element;
+                if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon)) return [];
+                const distance = calculateHaversine(lat, lng, point.lat, point.lon);
+                if (distance > 3) return [];
+                const name = element.tags?.['name:ko'] || element.tags?.name || label;
+                return [{ lat: point.lat, lng: point.lon, name, distance }];
+            }).sort((a, b) => a.distance - b.distance).slice(0, 8);
+
+            status.textContent = facilities.length ? `반경 3 km · 가까운 시설 ${facilities.length}곳 · 직선거리` : '반경 3 km 내 지도에 등록된 시설을 찾지 못했습니다.';
+            for (const facility of facilities) {
+                const point = [facility.lat, facility.lng];
+                const caption = facility.name + ' · ' + Math.round(facility.distance * 1000) + ' m';
+                const popup = document.createElement('span');
+                popup.textContent = caption;
+                const marker = L.circleMarker(point, { radius: 7, color: '#0c4a6e', fillColor: '#38bdf8', fillOpacity: 1 })
+                    .bindPopup(popup).addTo(facilityMarkers);
+                appendTravelResult(list, caption, () => {
+                    map.setView(point, Math.max(map.getZoom(), 15));
+                    marker.openPopup();
+                });
+            }
+            if (facilities.length) {
+                map.fitBounds([[lat, lng], ...facilities.map(facility => [facility.lat, facility.lng])], { padding: [24, 24], maxZoom: 15 });
+            }
+        } catch {
+            if (request === facilityRequest) status.textContent = '주변 시설을 불러올 수 없습니다. 다시 눌러 조회해 주세요.';
+            if (request === facilityRequest) button.setAttribute('aria-pressed', 'false');
+        }
     }
 
     async function sharePosition() {
