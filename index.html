@@ -208,6 +208,7 @@
                 <span id="weather-desc-display" style="font-size:14px; color:#cbd5e1; font-weight:bold;">--</span>
             </div>
             <p id="weather-refresh-status" class="travel-note">날씨 조회 중…</p>
+            <button id="weather-retry" type="button" class="btn-sm" onclick="refreshSelectedData(true)" hidden>날씨 다시 조회</button>
             <div class="grid-2 weather-details">
                 <div class="sub-card"><span class="weather-detail-label">체감온도</span><b id="apparent-temp" class="weather-detail-value">-- °C</b></div>
                 <div class="sub-card"><span class="weather-detail-label">최저/최고</span><b id="minmax-temp" class="weather-detail-value">-- / --</b></div>
@@ -481,6 +482,7 @@
         setSiteTime('weather-updated-at', null);
         setSiteTime('air-updated-at', null);
         document.getElementById('weather-refresh-status').textContent = '날씨 조회 중…';
+        document.getElementById('weather-retry').hidden = true;
         for (const id of ['temp-display', 'weather-desc-display', 'minmax-temp', 'wind-vis',
             'precip-prob', 'apparent-temp', 'sun-times', 'moon-times', 'pm10-status', 'pm25-status']) {
             document.getElementById(id).textContent = '—';
@@ -515,6 +517,8 @@
         const lng = currentLng;
         const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]);
         const weatherStatus = document.getElementById('weather-refresh-status');
+        const retryButton = document.getElementById('weather-retry');
+        retryButton.hidden = true;
         const airStatus = document.getElementById('air-quality-time');
         const checkedAt = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
 
@@ -526,14 +530,28 @@
                     hourly: 'apparent_temperature,precipitation_probability,wind_speed_10m,weather_code',
                     daily: 'temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max'
                 });
-                const data = await fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, signal);
+                const endpoint = 'https://api.open-meteo.com/v1/forecast?';
+                const weatherSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]);
+                let data;
+                try {
+                    data = await fetchJson(endpoint + params, weatherSignal());
+                } catch (error) {
+                    if (controller.signal.aborted || error.message === 'HTTP 429') throw error;
+                    console.warn('Initial forecast request failed', error);
+                    weatherStatus.textContent = '날씨를 다시 조회 중…';
+                    // Best Match is the default model. An explicit request uses a separate cache key.
+                    params.set('models', 'best_match');
+                    data = await fetchJson(endpoint + params, weatherSignal());
+                }
                 if (controller.signal.aborted) return;
                 renderWeatherData(data);
                 renderMoonTimes(lat, lng, data.timezone);
                 setSiteTime('weather-updated-at', new Date(), deviceTimeFormat);
                 weatherStatus.textContent = '마지막 조회 ' + checkedAt() + ' · 10분마다 갱신';
-            } catch {
+            } catch (error) {
                 if (controller.signal.aborted) return;
+                console.warn('Forecast update failed', error);
+                retryButton.hidden = false;
                 if (localTimeFormat) {
                     weatherStatus.textContent = '날씨 갱신 실패 · 이전 데이터 표시 중';
                     return;
