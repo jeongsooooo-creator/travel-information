@@ -54,6 +54,12 @@
         .travel-note { margin-top: 6px; color: #cbd5e1; font-size: 12px; }
         .travel-note:empty { margin: 0; }
         .travel-note a { color: #7dd3fc; }
+        .air-reading { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 4px 6px; text-align: right; }
+        .air-grade { padding: 2px 6px; border-radius: 6px; background: #334155; color: #e2e8f0; font-size: 11px; font-weight: 700; white-space: nowrap; }
+        .air-grade[data-grade="good"] { background: #1e3a8a; color: #dbeafe; }
+        .air-grade[data-grade="fair"] { background: #14532d; color: #dcfce7; }
+        .air-grade[data-grade="poor"] { background: #713f12; color: #fef3c7; }
+        .air-grade[data-grade="very-poor"] { background: #7f1d1d; color: #fee2e2; }
         /* Keep the map below the forecast in place while a new forecast loads. */
         .hourly-scroll { overflow: auto; height: 290px; margin-top: 10px; }
         #hourly-status { min-height: 2.8em; line-height: 1.4; }
@@ -204,10 +210,11 @@
                 <div class="sub-card" style="display:flex; justify-content:space-between;"><span style="color:#38bdf8;">🌙 월출 / 월몰</span><b id="moon-times">--:-- / --:--</b></div>
                 <div class="sub-card">
                     <div class="sub-card-title">대기질 모델 추정치</div>
-                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>미세먼지(PM10)</span><b id="pm10-status">--</b></div>
-                    <div style="display:flex; justify-content:space-between; border-top:1px solid #334155; padding-top:4px;"><span>초미세(PM2.5)</span><b id="pm25-status">--</b></div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>미세먼지(PM10)</span><span class="air-reading"><b id="pm10-status">—</b><span id="pm10-grade" class="air-grade">조회 중</span></span></div>
+                    <div style="display:flex; justify-content:space-between; border-top:1px solid #334155; padding-top:4px;"><span>초미세(PM2.5)</span><span class="air-reading"><b id="pm25-status">—</b><span id="pm25-grade" class="air-grade">조회 중</span></span></div>
                     <p class="travel-note">출처 <a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo · CAMS</a></p>
                     <p id="air-quality-time" class="travel-note"></p>
+                    <p class="travel-note">모델 농도를 <a href="https://m.airkorea.or.kr/info/behaviorInfo2">국내 등급 기준</a>으로 표시합니다.</p>
                     <p id="airkorea-measurements" class="travel-note" hidden><a href="https://www.airkorea.or.kr/web/main" target="_blank" rel="noopener noreferrer">국내 측정소 실측값 · 에어코리아</a></p>
                 </div>
             </div>
@@ -399,8 +406,8 @@
             .catch(() => null)
             .then(data => {
                 if (request !== positionRequest) return;
-                document.getElementById('pm10-status').textContent = measurement(data?.current?.pm10, ' µg/m³');
-                document.getElementById('pm25-status').textContent = measurement(data?.current?.pm2_5, ' µg/m³');
+                renderAirReading('pm10', data?.current?.pm10, [30, 80, 150]);
+                renderAirReading('pm25', data?.current?.pm2_5, [15, 35, 75]);
                 const time = data?.current?.time;
                 document.getElementById('air-quality-time').textContent = time
                     ? '모델 기준 시각 ' + time.replace('T', ' ') + ' (현지)'
@@ -412,6 +419,11 @@
             document.getElementById(id).textContent = '—';
         }
         document.getElementById('air-quality-time').textContent = '';
+        for (const id of ['pm10-grade', 'pm25-grade']) {
+            const badge = document.getElementById(id);
+            badge.textContent = '조회 중';
+            delete badge.dataset.grade;
+        }
         document.getElementById('tip-clothes').textContent = '날씨 분석 중…';
         document.getElementById('tip-photo').textContent = '일몰 분석 중…';
 
@@ -433,6 +445,26 @@
             }
             document.getElementById('local-clock').textContent = '현지 시각을 확인할 수 없습니다.';
         }
+    }
+
+    function renderAirReading(id, value, limits) {
+        const badge = document.getElementById(id + '-grade');
+        const reading = document.getElementById(id + '-status');
+        if (!Number.isFinite(value) || value < 0) {
+            reading.textContent = '—';
+            badge.textContent = '데이터 없음';
+            delete badge.dataset.grade;
+            return;
+        }
+
+        const grades = [
+            ['good', '좋음'], ['fair', '보통'], ['poor', '나쁨'], ['very-poor', '매우 나쁨']
+        ];
+        const index = limits.filter(limit => value > limit).length;
+        const [grade, label] = grades[index];
+        reading.textContent = measurement(value, ' µg/m³');
+        badge.dataset.grade = grade;
+        badge.textContent = label;
     }
 
     function measurement(value, unit) {
