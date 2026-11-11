@@ -825,6 +825,36 @@
         tourism: ['["tourism"="information"]["information"~"^(office|visitor_centre)$"]']
     };
 
+    const photonFacilityTags = {
+        transit: ['railway:station', 'railway:halt', 'railway:tram_stop', 'highway:bus_stop',
+            'public_transport:station', 'amenity:bus_station'],
+        pharmacy: ['amenity:pharmacy'],
+        toilets: ['amenity:toilets'],
+        tourism: ['tourism:information']
+    };
+
+    async function fetchPhotonFacilities(type, lat, lng, signal) {
+        const tags = photonFacilityTags[type];
+        const params = new URLSearchParams({ lat, lon: lng, radius: 3, limit: 15, dedupe: 0 });
+        for (const tag of tags) params.append('osm_tag', tag);
+        const data = await fetchJson('https://photon.komoot.io/reverse?' + params,
+            AbortSignal.any([signal, AbortSignal.timeout(8000)]));
+        if (!Array.isArray(data.features)) throw new Error('Invalid Photon response');
+
+        return data.features.flatMap(({ geometry, properties }) => {
+            if (geometry?.type !== 'Point' || !properties ||
+                !tags.includes(properties.osm_key + ':' + properties.osm_value)) return [];
+            const [lon, lat] = geometry.coordinates;
+            if (type === 'tourism') {
+                const subtype = properties.extra?.information;
+                const name = properties.name || '';
+                const officeName = /관광.{0,4}안내|観光案内|旅游咨询|touris[tm].*info|visitor.?cent|office de tourisme|offic[ei]na?.*turis|informaci[oó].*tur[ií]s|touristeninfo|turismo.*inform/i;
+                if (subtype ? !['office', 'visitor_centre'].includes(subtype) : !officeName.test(name)) return [];
+            }
+            return [{ lat, lon, tags: { name: properties.name } }];
+        });
+    }
+
     function clearFacilities() {
         facilityController?.abort();
         facilityController = null;
@@ -885,7 +915,27 @@
             const bounds = [south, west, north, east].map(value => Number(value.toFixed(6))).join(',');
             const queries = facilityFilters[button.dataset.facility].map(filter => `nwr(${bounds})${filter};`).join('');
             const query = `[out:json][timeout:7];(${queries});out center;`;
-            const elements = await fetchNearbyFacilities(query, controller.signal, status);
+            let elements;
+            let photonAvailable = false;
+            try {
+                elements = await fetchPhotonFacilities(button.dataset.facility, lat, lng, controller.signal);
+                photonAvailable = true;
+            } catch (error) {
+                if (controller.signal.aborted) return;
+                console.warn('Photon facility lookup failed', error);
+            }
+            if (!elements?.length) {
+                status.textContent = 'OpenStreetMap에서 추가로 시설을 조회 중…';
+                try {
+                    elements = await fetchNearbyFacilities(query, controller.signal, status);
+                } catch (error) {
+                    if (controller.signal.aborted) return;
+                    if (!photonAvailable) throw error;
+                    status.textContent = 'Photon에서 시설을 찾지 못했고, 추가 지도 서버에도 연결하지 못했습니다.';
+                    button.setAttribute('aria-pressed', 'false');
+                    return;
+                }
+            }
             if (controller.signal.aborted) return;
             const facilities = elements.flatMap(element => {
                 const point = element.center || element;
