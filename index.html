@@ -446,7 +446,10 @@
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
-                    if (positionRequest === 0) updatePosition(pos.coords.latitude, pos.coords.longitude);
+                    if (positionRequest !== 0) return;
+                    const { latitude, longitude } = pos.coords;
+                    updatePosition(latitude, longitude);
+                    map.panTo(selectedMarker.getLatLng(), { animate: false });
                 },
                 () => {
                     if (positionRequest === 0) updatePosition(37.5665, 126.9780, "서울", "대한민국");
