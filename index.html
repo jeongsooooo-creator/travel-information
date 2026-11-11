@@ -175,7 +175,7 @@
             <button type="button" class="btn-location" data-facility="toilets" aria-pressed="false" onclick="toggleFacilities(this)">공중화장실</button>
             <button type="button" class="btn-location" data-facility="tourism" aria-pressed="false" onclick="toggleFacilities(this)">관광안내소</button>
         </div>
-        <p class="travel-note">시설을 누르면 선택한 지도 좌표로 Overpass에서 조회합니다.</p>
+        <p class="travel-note">선택한 위치에서 반경 3 km 이내 시설을 찾습니다. 출처 OpenStreetMap</p>
         <p id="facility-status" class="travel-note" role="status"></p>
         <ul id="facility-results" class="travel-results"></ul>
         <div class="travel-controls">
@@ -194,6 +194,7 @@
                 <span id="temp-display" style="font-size:28px; font-weight:bold; color:white;">-- °C</span>
                 <span id="weather-desc-display" style="font-size:14px; color:#cbd5e1; font-weight:bold;">--</span>
             </div>
+            <p id="weather-refresh-status" class="travel-note">날씨 조회 중…</p>
             <div class="grid-2 weather-details">
                 <div class="sub-card"><span class="weather-detail-label">체감온도</span><b id="apparent-temp" class="weather-detail-value">-- °C</b></div>
                 <div class="sub-card"><span class="weather-detail-label">최저/최고</span><b id="minmax-temp" class="weather-detail-value">-- / --</b></div>
@@ -270,7 +271,10 @@
 
     let map, selectedMarker, facilityMarkers;
     let localTimeFormat;
-    let facilityRequest = 0;
+    let facilityController;
+    const dataRefreshInterval = 10 * 60 * 1000;
+    let lastDataRequestAt = 0;
+    let dataController;
     let searchRequest = 0;
     const placeSearchCache = new Map();
     let positionRequest = 0;
@@ -362,7 +366,8 @@
         document.getElementById('share-url').hidden = true;
         document.getElementById('share-status').textContent = '';
         fetchSafeMajorCities(lat, lng, request);
-        fetchWeatherAndAirQuality(lat, lng, request);
+        resetWeatherAndAirQuality();
+        refreshSelectedData(true);
 
         document.getElementById('input-lat').value = currentLat;
         document.getElementById('input-lng').value = currentLng;
@@ -400,25 +405,15 @@
         }
     }
 
-    async function fetchWeatherAndAirQuality(lat, lng, request) {
-        fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lng}&current=pm10,pm2_5&timezone=auto`)
-            .then(res => res.ok ? res.json() : null)
-            .catch(() => null)
-            .then(data => {
-                if (request !== positionRequest) return;
-                renderAirReading('pm10', data?.current?.pm10, [30, 80, 150]);
-                renderAirReading('pm25', data?.current?.pm2_5, [15, 35, 75]);
-                const time = data?.current?.time;
-                document.getElementById('air-quality-time').textContent = time
-                    ? '모델 기준 시각 ' + time.replace('T', ' ') + ' (현지)'
-                    : '대기질 모델 정보를 불러올 수 없습니다.';
-            });
-
+    function resetWeatherAndAirQuality() {
+        document.getElementById('weather-refresh-status').textContent = '날씨 조회 중…';
         for (const id of ['temp-display', 'weather-desc-display', 'minmax-temp', 'wind-vis',
             'precip-prob', 'apparent-temp', 'sun-times', 'moon-times', 'pm10-status', 'pm25-status']) {
             document.getElementById(id).textContent = '—';
         }
-        document.getElementById('air-quality-time').textContent = '';
+        const airStatus = document.getElementById('air-quality-time');
+        airStatus.textContent = '';
+        delete airStatus.dataset.loaded;
         for (const id of ['pm10-grade', 'pm25-grade']) {
             const badge = document.getElementById(id);
             badge.textContent = '조회 중';
@@ -426,25 +421,78 @@
         }
         document.getElementById('tip-clothes').textContent = '날씨 분석 중…';
         document.getElementById('tip-photo').textContent = '일몰 분석 중…';
+    }
 
-        try {
-            const params = new URLSearchParams({
-                latitude: lat, longitude: lng, timezone: 'auto', forecast_days: 2, wind_speed_unit: 'ms',
-                current: 'temperature_2m,apparent_temperature,weather_code,wind_speed_10m',
-                hourly: 'apparent_temperature,precipitation_probability,wind_speed_10m,weather_code',
-                daily: 'temperature_2m_max,temperature_2m_min,sunrise,sunset,moonrise,moonset,precipitation_probability_max'
-            });
-            const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
-            if (!response.ok) throw new Error('Forecast unavailable');
-            const data = await response.json();
-            if (request === positionRequest) renderWeatherData(data);
-        } catch {
-            if (request !== positionRequest) return;
-            for (const id of ['weather-desc-display', 'hourly-status', 'tip-action', 'tip-clothes', 'tip-photo']) {
-                document.getElementById(id).textContent = '날씨 정보를 불러올 수 없습니다.';
+    async function fetchJson(url, signal) {
+        const response = await fetch(url, { signal });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+    }
+
+    async function refreshSelectedData(positionChanged = false) {
+        if (!positionChanged && (document.hidden || !positionRequest || dataController ||
+            Date.now() - lastDataRequestAt < dataRefreshInterval)) return;
+
+        dataController?.abort();
+        const controller = new AbortController();
+        dataController = controller;
+        lastDataRequestAt = Date.now();
+        const lat = currentLat;
+        const lng = currentLng;
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]);
+        const weatherStatus = document.getElementById('weather-refresh-status');
+        const airStatus = document.getElementById('air-quality-time');
+        const checkedAt = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+
+        async function updateWeather() {
+            try {
+                const params = new URLSearchParams({
+                    latitude: lat, longitude: lng, timezone: 'auto', forecast_days: 2, wind_speed_unit: 'ms',
+                    current: 'temperature_2m,apparent_temperature,weather_code,wind_speed_10m',
+                    hourly: 'apparent_temperature,precipitation_probability,wind_speed_10m,weather_code',
+                    daily: 'temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max'
+                });
+                const data = await fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, signal);
+                if (controller.signal.aborted) return;
+                renderWeatherData(data);
+                weatherStatus.textContent = '마지막 조회 ' + checkedAt() + ' · 10분마다 갱신';
+            } catch {
+                if (controller.signal.aborted) return;
+                if (localTimeFormat) {
+                    weatherStatus.textContent = '날씨 갱신 실패 · 이전 데이터 표시 중';
+                    return;
+                }
+                weatherStatus.textContent = '날씨 조회 실패 · 다음 갱신 때 다시 시도합니다.';
+                for (const id of ['weather-desc-display', 'hourly-status', 'tip-action', 'tip-clothes', 'tip-photo']) {
+                    document.getElementById(id).textContent = '날씨 정보를 불러올 수 없습니다.';
+                }
+                document.getElementById('local-clock').textContent = '현지 시각을 확인할 수 없습니다.';
             }
-            document.getElementById('local-clock').textContent = '현지 시각을 확인할 수 없습니다.';
         }
+
+        async function updateAirQuality() {
+            try {
+                const data = await fetchJson(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lng}&current=pm10,pm2_5&timezone=auto`, signal);
+                if (controller.signal.aborted) return;
+                if (!data.current?.time) throw new Error('Missing air quality data');
+                renderAirReading('pm10', data.current.pm10, [30, 80, 150]);
+                renderAirReading('pm25', data.current.pm2_5, [15, 35, 75]);
+                airStatus.textContent = '모델 기준 시각 ' + data.current.time.replace('T', ' ') + ' (현지)';
+                airStatus.dataset.loaded = 'true';
+            } catch {
+                if (controller.signal.aborted) return;
+                if (airStatus.dataset.loaded) {
+                    airStatus.textContent = '대기질 갱신 실패 · 이전 데이터 표시 중';
+                    return;
+                }
+                renderAirReading('pm10', null, []);
+                renderAirReading('pm25', null, []);
+                airStatus.textContent = '대기질 조회 실패 · 다음 갱신 때 다시 시도합니다.';
+            }
+        }
+
+        await Promise.all([updateWeather(), updateAirQuality()]);
+        if (dataController === controller) dataController = null;
     }
 
     function renderAirReading(id, value, limits) {
@@ -482,7 +530,7 @@
 
         const formatTime = (iso) => iso?.split('T')[1] || '--:--';
         document.getElementById('sun-times').textContent = formatTime(daily.sunrise[0]) + ' / ' + formatTime(daily.sunset[0]);
-        document.getElementById('moon-times').textContent = formatTime(daily.moonrise?.[0]) + ' / ' + formatTime(daily.moonset?.[0]);
+        document.getElementById('moon-times').textContent = '제공되지 않음';
         generateTravelAdvice(current.temperature_2m, current.apparent_temperature, current.weather_code, precipProb, formatTime(daily.sunset[0]));
 
         localTimeFormat = new Intl.DateTimeFormat('ko-KR', {
@@ -507,7 +555,10 @@
     function renderHourlyForecast(rows) {
         const status = document.getElementById('hourly-status');
         status.textContent = rows.length ? '현지 시각 기준 · 강수확률은 표시 시각 직전 1시간 기준' : '시간별 예보가 없습니다.';
-        if (!rows.length) return;
+        if (!rows.length) {
+            document.getElementById('hourly-forecast').replaceChildren();
+            return;
+        }
 
         const table = document.createElement('table');
         table.className = 'hourly-table';
@@ -706,11 +757,35 @@
     };
 
     function clearFacilities() {
-        ++facilityRequest;
+        facilityController?.abort();
+        facilityController = null;
         facilityMarkers.clearLayers();
         document.getElementById('facility-results').replaceChildren();
         document.getElementById('facility-status').textContent = '';
         for (const button of document.querySelectorAll('[data-facility]')) button.setAttribute('aria-pressed', 'false');
+    }
+
+    async function fetchNearbyFacilities(query, signal, status) {
+        const endpoints = [
+            'https://overpass.private.coffee/api/interpreter',
+            'https://overpass-api.de/api/interpreter'
+        ];
+        const params = new URLSearchParams({ data: query });
+        for (const endpoint of endpoints) {
+            signal.throwIfAborted();
+            try {
+                const data = await fetchJson(endpoint + '?' + params,
+                    AbortSignal.any([signal, AbortSignal.timeout(10000)]));
+                if (!Array.isArray(data.elements) || data.remark) {
+                    throw new Error(data.remark || 'Invalid Overpass response');
+                }
+                return data.elements;
+            } catch (error) {
+                signal.throwIfAborted();
+                if (endpoint === endpoints[1]) throw error;
+                status.textContent = '다른 지도 서버에서 시설을 조회 중…';
+            }
+        }
     }
 
     async function toggleFacilities(button) {
@@ -719,7 +794,8 @@
         if (active) return;
 
         button.setAttribute('aria-pressed', 'true');
-        const request = facilityRequest;
+        const controller = new AbortController();
+        facilityController = controller;
         const lat = currentLat;
         const lng = currentLng;
         const label = button.textContent.trim();
@@ -738,14 +814,11 @@
             const west = reachesPole ? -180 : wrapLongitude(lng - longitudeSpan);
             const east = reachesPole ? 180 : wrapLongitude(lng + longitudeSpan);
             const bounds = [south, west, north, east].map(value => Number(value.toFixed(6))).join(',');
-            const queries = facilityFilters[button.dataset.facility].map(filter => `nwr${filter}(${bounds});`).join('');
-            const query = `[out:json][timeout:18];(${queries});out center;`;
-            const response = await fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query), { signal: AbortSignal.timeout(24000) });
-            if (!response.ok) throw new Error('Overpass HTTP ' + response.status);
-            const data = await response.json();
-            if (request !== facilityRequest) return;
-            if (data.remark) throw new Error('Overpass: ' + data.remark);
-            const facilities = data.elements.flatMap(element => {
+            const queries = facilityFilters[button.dataset.facility].map(filter => `nwr(${bounds})${filter};`).join('');
+            const query = `[out:json][timeout:7];(${queries});out center;`;
+            const elements = await fetchNearbyFacilities(query, controller.signal, status);
+            if (controller.signal.aborted) return;
+            const facilities = elements.flatMap(element => {
                 const point = element.center || element;
                 if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon)) return [];
                 const distance = calculateHaversine(lat, lng, point.lat, point.lon);
@@ -771,9 +844,9 @@
                 map.fitBounds([[lat, lng], ...facilities.map(facility => [facility.lat, facility.lng])], { padding: [24, 24], maxZoom: 15 });
             }
         } catch (error) {
-            if (request !== facilityRequest) return;
+            if (controller.signal.aborted) return;
             console.warn('Nearby facility lookup failed', error);
-            status.textContent = '시설 조회 서버가 응답하지 않거나 오류를 반환했습니다. 잠시 후 다시 눌러 주세요.';
+            status.textContent = '시설 조회 서버에 연결하지 못했습니다. 잠시 후 다시 눌러 주세요.';
             button.setAttribute('aria-pressed', 'false');
         }
     }
@@ -864,7 +937,11 @@
         } else {
             locateUser(true);
         }
-        setInterval(updateLocalClock, 15000);
+        setInterval(() => {
+            updateLocalClock();
+            refreshSelectedData();
+        }, 15000);
+        document.addEventListener('visibilitychange', () => refreshSelectedData());
     };
 </script>
 </body>
