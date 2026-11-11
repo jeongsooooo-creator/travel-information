@@ -40,6 +40,12 @@
         
         /* Buttons & Inputs */
         .btn-primary { background: linear-gradient(135deg, #0284c7, #4f46e5); color: white; border: 1px solid #38bdf8; padding: 8px 14px; border-radius: 8px; font-weight: bold; font-size: 13px; width: 100%; cursor: pointer; }
+        .location-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+        .location-actions .btn-primary { flex: 1 1 185px; width: auto; }
+        .btn-location { flex: 1 0 auto; background: #0f172a; color: #7dd3fc; border: 1px solid #38bdf8; padding: 8px 12px; border-radius: 8px; font-weight: bold; font-size: 13px; cursor: pointer; }
+        .btn-location:disabled { opacity: 0.7; cursor: wait; }
+        .location-status { color: #cbd5e1; font-size: 12px; }
+        .location-status:not(:empty) { margin-top: 6px; }
         .btn-sm { background-color: #0284c7; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 12px; cursor: pointer; }
         .input-coord { background-color: #0f172a; border: 1px solid #475569; color: white; padding: 4px 8px; border-radius: 4px; width: 80px; text-align: center; font-size: 12px; }
         
@@ -82,7 +88,11 @@
     <div class="card">
         <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
             <h1 style="font-size: 18px; color: #38bdf8;">🌐 글로벌 여행·기상 어드바이저</h1>
-            <button onclick="openCityModal()" class="btn-primary">🏙️ 세계 주요 도시 선택 (Top 20)</button>
+            <div class="location-actions">
+                <button type="button" onclick="openCityModal()" class="btn-primary">🏙️ 세계 주요 도시 선택 (Top 20)</button>
+                <button type="button" id="locate-button" onclick="locateUser()" class="btn-location">📍 내 위치로</button>
+            </div>
+            <p id="location-status" class="location-status" role="status"></p>
         </div>
         
         <div style="display:flex; flex-direction:column; gap:8px; background:#0f172a; padding:10px; border-radius:8px; border:1px solid #334155;">
@@ -203,6 +213,7 @@
 
     let map, selectedMarker;
     let positionRequest = 0;
+    let geolocationRequest = 0;
     let currentLat = 37.5665;
     let currentLng = 126.9780;
 
@@ -272,6 +283,7 @@
 
     async function updatePosition(lat, lng, cityName = null, countryName = null) {
         const request = ++positionRequest;
+        document.getElementById('location-status').textContent = '';
         lat = parseFloat(lat.toFixed(4));
         lng = parseFloat(lng.toFixed(4));
         currentLat = lat;
@@ -441,24 +453,54 @@
         return "흐림 ☁️";
     }
 
+    function locateUser(onStartup = false) {
+        const request = ++geolocationRequest;
+        const startingPosition = positionRequest;
+        const button = document.getElementById('locate-button');
+        const status = document.getElementById('location-status');
+
+        if (!onStartup) {
+            button.disabled = true;
+            status.textContent = '현재 위치를 확인하는 중입니다…';
+        }
+
+        function finishLookup() {
+            if (request !== geolocationRequest) return false;
+            button.disabled = false;
+            return startingPosition === positionRequest;
+        }
+
+        function onLocationError(error) {
+            if (!finishLookup()) return;
+            if (onStartup) {
+                updatePosition(37.5665, 126.9780, '서울', '대한민국');
+                return;
+            }
+            status.textContent = error?.code === 1
+                ? '브라우저에서 이 사이트의 위치 접근을 허용해 주세요.'
+                : '현재 위치를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.';
+        }
+
+        if (!navigator.geolocation) {
+            onLocationError();
+            if (!onStartup) status.textContent = '이 브라우저에서는 현재 위치를 확인할 수 없습니다.';
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            ({ coords }) => {
+                if (!finishLookup()) return;
+                updatePosition(coords.latitude, coords.longitude);
+                map.panTo(selectedMarker.getLatLng(), { animate: false });
+            },
+            onLocationError,
+            { timeout: 5000, maximumAge: 0 }
+        );
+    }
+
     window.onload = function() {
         initMap();
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    if (positionRequest !== 0) return;
-                    const { latitude, longitude } = pos.coords;
-                    updatePosition(latitude, longitude);
-                    map.panTo(selectedMarker.getLatLng(), { animate: false });
-                },
-                () => {
-                    if (positionRequest === 0) updatePosition(37.5665, 126.9780, "서울", "대한민국");
-                },
-                { timeout: 5000 }
-            );
-        } else {
-            updatePosition(37.5665, 126.9780, "서울", "대한민국");
-        }
+        locateUser(true);
     };
 </script>
 </body>
