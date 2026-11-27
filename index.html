@@ -34,6 +34,14 @@
         body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 12px; }
         .container { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
         
+        .outing { background: linear-gradient(135deg, #164e63, #243b70); border-color: #3b82a1; }
+        .outing h2 { color:#e0f2fe; font-size:18px; margin-bottom:10px; }
+        .outing-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+        .outing-item { background:#0f253b; border-radius:9px; padding:12px; line-height:1.5; font-size:14px; overflow-wrap:anywhere; }
+        .outing-item strong { color:#bae6fd; display:block; margin-bottom:4px; }
+        .outing-note { margin-top:8px; color:#d1e3ed; font-size:13px; line-height:1.5; }
+        .outing-select { background:#0f172a; color:#fff; border:1px solid #789; padding:5px; border-radius:6px; font:inherit; }
+        @media(max-width:420px){.outing-grid{grid-template-columns:1fr 1fr}.outing-item{padding:9px;font-size:13px}}
         /* Card Styles */
         .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); }
         .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid #334155; padding-bottom: 8px; }
@@ -147,6 +155,19 @@
             </div>
         </div>
     </div>
+
+    <section class="card outing" aria-labelledby="outing-title">
+        <h2 id="outing-title">🌿 오늘 외출하기</h2>
+        <div id="outing-location" class="outing-note">선택한 위치 기준 · 정보를 불러오는 중</div>
+        <div class="outing-grid" style="margin-top:10px">
+            <div class="outing-item"><strong>지금 날씨</strong><span id="outing-weather">조회 중…</span></div>
+            <div class="outing-item"><strong>현재 대기질</strong><span id="outing-air">조회 중…</span></div>
+            <div class="outing-item"><strong>챙길 것</strong><span id="outing-prep">조회 중…</span></div>
+            <div class="outing-item"><strong>추천 외출 시간</strong><span id="outing-best">예보 조회 중…</span></div>
+        </div>
+        <p class="outing-note"><label for="outing-duration">외출 시간 </label><select class="outing-select" id="outing-duration"><option value="1">1시간</option><option value="2" selected>2시간</option><option value="3">3시간</option></select> <span id="outing-reason">현지 시각 기준</span></p>
+        <p class="outing-note">대기질 예측은 CAMS 모델값으로, 측정소 실측값과 다를 수 있습니다. <a href="https://open-meteo.com/en/docs/air-quality-api" style="color:#bae6fd">Open-Meteo · CAMS</a></p>
+    </section>
 
     <!-- Adviser Briefing -->
     <div class="card" style="background: linear-gradient(135deg, rgba(2,132,199,0.2), rgba(79,70,229,0.2)); border-color: rgba(56,189,248,0.4);">
@@ -337,6 +358,7 @@
     const placeSearchCache = new Map();
     let positionRequest = 0;
     let geolocationRequest = 0;
+    let outingData = null;
     let currentLat = 37.5665;
     let currentLng = 126.9780;
 
@@ -465,6 +487,7 @@
 
         document.getElementById('coord-badge').innerText = `[${countryName} ${cityName}] 위도: ${currentLat} | 경도: ${currentLng}`;
         document.getElementById('location-name-display').innerText = `${countryName} ${cityName}`;
+        document.getElementById('outing-location').textContent = `${countryName} ${cityName} · 선택한 위치 기준`;
         const isSouthKorea = await selectedCountryIsKorea;
         if (request === positionRequest) airKoreaLink.hidden = !isSouthKorea;
 
@@ -481,6 +504,10 @@
     }
 
     function resetWeatherAndAirQuality() {
+        outingData = null;
+        for (const id of ['outing-weather','outing-air','outing-prep','outing-best']) document.getElementById(id).textContent = '조회 중…';
+        document.getElementById('outing-location').textContent = '선택한 위치 기준 · 정보를 불러오는 중';
+        document.getElementById('outing-reason').textContent = '현지 시각 기준';
         setSiteTime('weather-updated-at', null);
         setSiteTime('air-updated-at', null);
         document.getElementById('weather-refresh-status').textContent = '날씨 조회 중…';
@@ -548,12 +575,22 @@
                 }
                 if (controller.signal.aborted) return;
                 renderWeatherData(data);
+                outingData = { weather: data, air: null };
+                renderOuting();
+                try {
+                    const aqParams = new URLSearchParams({latitude: lat, longitude: lng, timezone:'auto', forecast_days:2, hourly:'pm2_5'});
+                    const prediction = await fetchJson('https://air-quality-api.open-meteo.com/v1/air-quality?' + aqParams, AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]));
+                    if (controller.signal.aborted) return;
+                    outingData.air = prediction.hourly;
+                    renderOuting();
+                } catch (error) { if (controller.signal.aborted) return; renderOuting(); }
                 renderMoonTimes(lat, lng, data.timezone);
                 setSiteTime('weather-updated-at', new Date(), deviceTimeFormat);
                 weatherStatus.textContent = '마지막 조회 ' + checkedAt() + ' · 10분마다 갱신';
             } catch (error) {
                 if (controller.signal.aborted) return;
                 console.warn('Forecast update failed', error);
+                if (!outingData) for (const id of ['outing-weather','outing-prep','outing-best']) document.getElementById(id).textContent = '날씨 정보를 불러오지 못했습니다.';
                 retryButton.hidden = false;
                 if (localTimeFormat) {
                     weatherStatus.textContent = '날씨 갱신 실패 · 이전 데이터 표시 중';
@@ -579,12 +616,13 @@
                     if (station) {
                         renderAirReading('pm10', station.pm10, [30, 80, 150]);
                         renderAirReading('pm25', station.pm25, [15, 35, 75]);
-                        airStatus.textContent = `${station.name} 측정소 · ${station.time.slice(0, 16).replace('T', ' ')} (한국 시각)`;
+                        airStatus.textContent = `${station.name} 측정소 · ${calculateHaversine(lat, lng, station.lat, station.lng).toFixed(1)} km · ${station.time.slice(0, 16).replace('T', ' ')} (한국 시각)`;
                         link.textContent = '한국환경공단 에어코리아 · 측정값';
                         link.href = 'https://www.airkorea.or.kr/web/irsttRealSearch';
                         source.hidden = false;
                         airStatus.dataset.loaded = 'true';
                         setSiteTime('air-updated-at', new Date(), deviceTimeFormat);
+                        document.getElementById('outing-air').textContent = `초미세먼지 ${station.pm25} µg/m³ · 실측 · ${station.name} 측정소 ${calculateHaversine(lat,lng,station.lat,station.lng).toFixed(1)} km · ${station.time.slice(0,16).replace('T',' ')} 한국 시각`;
                         return;
                     }
                 }
@@ -601,15 +639,18 @@
                 source.hidden = false;
                 airStatus.dataset.loaded = 'true';
                 setSiteTime('air-updated-at', new Date(), deviceTimeFormat);
+                document.getElementById('outing-air').textContent = Number.isFinite(data.current.pm2_5) ? `초미세먼지 ${data.current.pm2_5} µg/m³ · CAMS 모델 예측 · ${data.current.time.replace('T',' ')} 현지 시각` : '대기질 정보 없음';
             } catch {
                 if (controller.signal.aborted) return;
                 if (airStatus.dataset.loaded) {
                     airStatus.textContent = '대기질 갱신 실패 · 이전 데이터 표시 중';
+                    document.getElementById('outing-air').textContent += ' · 갱신 실패, 이전 값';
                     return;
                 }
                 renderAirReading('pm10', null, []);
                 renderAirReading('pm25', null, []);
                 airStatus.textContent = '대기질 조회 실패 · 다음 갱신 때 다시 시도합니다.';
+                document.getElementById('outing-air').textContent = '대기질 정보를 불러오지 못했습니다.';
             }
         }
 
@@ -691,6 +732,48 @@
         })).filter(row => row.time > current.time).slice(0, 12);
         renderHourlyForecast(rows);
     }
+
+    function renderOuting() {
+        if (!outingData) return;
+        const {weather, air} = outingData;
+        const c = weather.current, h = weather.hourly;
+        const finite = Number.isFinite;
+        document.getElementById('outing-weather').textContent = getWeatherText(c.weather_code) + ' · ' + measurement(c.temperature_2m, '°C') + ' · 체감 ' + measurement(c.apparent_temperature, '°C');
+        const future = h.time.map((time,i) => ({time, i})).filter(x => x.time > c.time).slice(0,12);
+        const rainSoon = future.slice(0,3).some(x => finite(h.precipitation_probability[x.i]) && h.precipitation_probability[x.i] >= 50);
+        const prep = [];
+        if (rainSoon) prep.push('☂️ 우산');
+        if (finite(c.apparent_temperature) && c.apparent_temperature < 15) prep.push('🧥 겉옷');
+        if (finite(c.wind_speed_10m) && c.wind_speed_10m >= 8) prep.push('🌬 강한 바람 주의');
+        document.getElementById('outing-prep').textContent = prep.length ? prep.join(' · ') : '현재 날씨 기준 특별한 준비물 없음';
+        const duration = Number(document.getElementById('outing-duration').value);
+        const rows = future.slice(1); // Each hourly rain value covers the preceding hour; exclude a partly elapsed hour.
+        const airMap = new Map((air?.time || []).map((time,i) => [time,air.pm2_5?.[i]]));
+        let choices=[];
+        for (let k=0;k+duration<=rows.length;k++) {
+            const group=rows.slice(k,k+duration);
+            if (group.some(x => !finite(h.precipitation_probability[x.i]) || !finite(h.apparent_temperature[x.i]) || !finite(h.wind_speed_10m[x.i]))) continue;
+            const airValues=group.map(x=>airMap.get(x.time));
+            const hasAir=airValues.every(finite);
+            let score=group.reduce((sum,x)=>sum+h.precipitation_probability[x.i]*0.6+Math.max(0,12-h.apparent_temperature[x.i])*2+Math.max(0,h.apparent_temperature[x.i]-27)*2+Math.max(0,h.wind_speed_10m[x.i]-5)*4,0)/duration;
+            if (hasAir) score += airValues.reduce((sum,v)=>sum+Math.max(0,v-15)*0.5,0)/duration;
+            choices.push({group,score,hasAir, airValues});
+        }
+        // Compare like with like: include air only when every eligible window has complete air data.
+        if (choices.some(x=>!x.hasAir)) for (const choice of choices) if (choice.hasAir) choice.score -= choice.airValues.reduce((sum,v)=>sum+Math.max(0,v-15)*0.5,0)/duration;
+        const useAir=choices.length>0 && choices.every(x=>x.hasAir);
+        choices.sort((a,b)=>a.score-b.score);
+        const best=choices[0], output=document.getElementById('outing-best'), reason=document.getElementById('outing-reason');
+        if (!best) {output.textContent='예보 정보가 부족해요';reason.textContent='추천에 필요한 예보를 확인할 수 없습니다.';return;}
+        if (best.score>=60) {output.textContent='뚜렷하게 좋은 시간이 없어요';reason.textContent='시간별 예보를 직접 확인해 주세요.';return;}
+        const end=best.group.at(-1).time;
+        const startMs=Date.parse(best.group[0].time+'Z')-3600000;
+        const start=new Date(startMs).toISOString().slice(0,16);
+        const label=t=>t.slice(5,10).replace('-','/')+' '+t.slice(11,16);
+        output.textContent=label(start)+' ~ '+label(end);
+        reason.textContent='현지 시각 · 강수, 체감온도, 바람'+(useAir?', 초미세먼지 모델 예측':' (대기질 예측 제외)')+'을 비교한 상대적 추천';
+    }
+    document.getElementById('outing-duration').addEventListener('change', renderOuting);
 
     function renderMoonTimes(lat, lng, timezone) {
         const output = document.getElementById('moon-times');
@@ -1183,7 +1266,8 @@
             updatePosition(lat, lng);
             map.panTo(selectedMarker.getLatLng(), { animate: false });
         } else {
-            locateUser(true);
+            updatePosition(37.5665, 126.9780, '서울', '대한민국');
+            document.getElementById('location-status').textContent = '기본 위치는 서울입니다. 내 위치로를 누르거나 도시를 선택해 주세요.';
         }
         setInterval(() => {
             updateLocalClock();
